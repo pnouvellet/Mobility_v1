@@ -1,0 +1,250 @@
+---
+title: "R0Beta"
+author: "Pierre Nouvellet"
+date: "2019-07"
+---
+
+```{r , include = FALSE, message = FALSE, warning = FALSE, error = FALSE}
+library(knitr)
+library(Hmisc)
+library(EpiEstim)
+library(zoo)
+library(latex2exp)
+
+opts_chunk$set(collapse = TRUE)
+
+opts_chunk$set(fig.path='figs/', fig.keep='high', 
+               dev=c('png'), fig.width=9, fig.height=6, cache=FALSE,
+               tidy=FALSE, warning=FALSE, fig.show="asis"
+ 	       )
+
+```
+
+# input data
+
+
+```{r}
+
+
+# date_week_finishing <-  as.Date('26/04/2020',format = '%d/%m/%Y')
+# si <- 2
+# rep <- 1e3#1e4
+# rep_sim <- 1e3
+
+inputs<- readRDS(file=paste0('../inputProcessing/Rdata/',date_week_finishing,'_inputs_SI_',si,'.rds'))
+
+D <- inputs$D
+M <- inputs$M
+Ot <- inputs$Ot
+W <- inputs$W
+H <- inputs$H
+SI <- inputs$SI
+delta_id <- inputs$delta_id
+#
+country <- names(D)[-1]
+
+mD <- as.matrix(D[,-1])
+N_geo <- ncol(D)-1
+N_days <- nrow(D)
+
+```
+
+
+# full model
+
+## parameters 
+
+```{r}
+# epi
+R0 <- 5
+# for risk
+b <- 0
+o <- 1
+
+theta0 <- c(rep(R0,N_geo),
+            rep(b,N_geo),
+            rep(o,N_geo))
+
+prior_theta <- matrix(c(rep(c(2,5),N_geo),
+                        rep(c(-1e2,1e2),N_geo),
+                        rep(c(0,1e5),N_geo)),
+                      length(theta0),2, byrow=TRUE)
+
+# parameter names
+f0 <- function(x) paste0('R0_',x)
+f1 <- function(x) paste0('beta_',x)
+f2 <- function(x) paste0('Over_',x)
+n_t<- c(sapply(country,f0), sapply(country,f1), sapply(country,f2))
+
+# sd dev for proposal
+sigma <- rep(1e-1,length(theta0))
+
+# useful functions
+sapply(paste0('Rscript/MCMC_over2/',(list.files('Rscript/MCMC_over2/'))),FUN = source)
+ 
+```
+
+## run MCMC
+
+```{r}
+#check
+# res <- MCMC_iter(iter = rep, theta0 = theta0, s = sigma)
+res <- MCMC_full(iter = rep, theta0 = theta0, s = sigma, repli_adapt = 10, within_iter = rep/10)
+
+
+```
+
+
+## check convergence
+
+
+```{r}
+
+Acc <- colSums(diff(res$theta)!=0)/(rep-1)
+if(rep >1e2) f <- round(seq(1,rep,length.out = 1e2))
+plot(res$logL[,1],main=paste0('DIC ',res$DIC[1],', P ',res$DIC[2]))
+layout(matrix(1:4,2,2))
+for (i in 1:length(theta0)){
+  plot(res$theta[,i],
+       main = paste0(n_t[i],' - ',round(Acc[i]*100)))#,       ylim = prior_theta[i,])
+}
+
+# apply(res$theta,2,quantile,c(.5,.025,.975))
+
+```
+
+
+
+```{r}
+ncountry <- country
+ncountry[which(ncountry %in% 'United_Kingdom')] <- 'UK'
+ncountry[which(ncountry %in% 'United_States_of_America')] <- 'USA'
+
+R0s <- apply(res$theta[,1:N_geo],2,quantile,c(.5,.025,.975))
+betas <- apply(res$theta[,N_geo+(1:N_geo)],2,quantile,c(.5,.025,.975))
+over <- apply(res$theta[,2*N_geo+(1:N_geo)],2,quantile,c(.5,.025,.975))
+
+## margin for side 2 is 7 lines in size
+par(mar = c(7,4,4,2) + 0.1) ## default is c(5,4,4,2) + 0.1
+
+errbar(1:N_geo,R0s[1,],R0s[2,],R0s[3,],
+       xlab = '', ylab = TeX('R_0'), bty = 'n',xaxt = "n",ylim=c(0,10))
+       # xlab = '', ylab = 'R',ylim = c(0,3), bty = 'n',xaxt = "n")
+      
+lines(c(1,N_geo),rep(1,2), col = 'red')
+
+axis(1, at=1:N_geo, labels=ncountry,las=2)
+
+####
+errbar(1:N_geo,betas[1,],betas[2,],betas[3,],
+       xlab = '', ylab = TeX('$\\beta$'), bty = 'n',xaxt = "n")
+       # xlab = '', ylab = 'R',ylim = c(0,3), bty = 'n',xaxt = "n")
+      
+# lines(c(1,N_geo),rep(1,2), col = 'red')
+
+axis(1, at=1:N_geo, labels=ncountry,las=2)
+
+```
+
+
+# forecast and predictions
+
+## short-term
+
+```{r}
+n_pred <- 7
+
+# choose future mobility
+M_pred <- rbind(M,matrix(M[nrow(M),],n_pred,N_geo,byrow = TRUE))
+
+# useful functions
+sapply(paste0('../inputs/proj_f/',(list.files('../inputs/proj_f'))),FUN = source)
+
+res_projection_ST <- mobility_prediction_over2(n_pred = n_pred, rep_sim = rep_sim)
+
+apply(res_projection_ST$D_pred[,1,],1,median)
+apply(res_projection_ST$D_pred[,1,],1,mean)
+
+```
+
+
+## longer-term
+
+### first scenario
+
+```{r}
+n_pred <- 60
+rep_sim2 <- rep_sim
+# choose future mobility
+M_pred <- rbind(M,matrix(M[nrow(M),],n_pred,N_geo,byrow = TRUE))
+
+res_projection_LT1 <- mobility_prediction_over2(n_pred = n_pred, rep_sim = rep_sim2)
+
+# aa <- res_projection_LT1$D_pred[,1,]
+# which(is.na(aa[,163]))
+# 
+# apply(res_projection_LT1$D_pred[1:7,1,],1,median)
+# apply(res_projection_LT1$D_pred[1:7,1,],1,mean)
+
+```
+
+
+### Second scenario
+ 
+```{r}
+n_pred <- 60
+
+# choose future mobility
+new_M <- matrix(NA,n_pred,N_geo,byrow = TRUE)
+for (i in 1:N_geo){
+  x <- 0:(n_pred-1)
+  new_M[,i] <- (1-M[nrow(M),i])/(n_pred-1) * x + M[nrow(M),i]
+}
+M_pred <- rbind(M,new_M)
+
+res_projection_LT2 <- mobility_prediction_over2(n_pred = n_pred, rep_sim = rep_sim2)
+
+
+
+```
+
+### thrid scenario
+ 
+```{r}
+n_pred <- 60
+
+# choose future mobility
+new_M <- matrix(NA,n_pred,N_geo,byrow = TRUE)
+
+for (i in 1:N_geo){
+  Mf <- (1+M[nrow(M),i])/2
+  x <- 0:(n_pred-1)
+  new_M[,i] <- (Mf-M[nrow(M),i])/(n_pred-1) * x + M[nrow(M),i]
+}
+M_pred <- rbind(M,new_M)
+
+res_projection_LT3 <- mobility_prediction_over2(n_pred = n_pred, rep_sim = rep_sim2)
+
+
+
+```
+
+## save for output
+
+
+
+Standard output for project
+
+
+```{r}
+
+output <- list(resMCMC = res,
+               res_projection_ST = res_projection_ST,
+               res_projection_LT1 = res_projection_LT1,
+               res_projection_LT2 = res_projection_LT2,
+               res_projection_LT3 = res_projection_LT3)
+
+
+saveRDS(object = output,
+        file = paste0('Rdata/',date_week_finishing,'_output_over_SI_',si,'.rds' ))
+```

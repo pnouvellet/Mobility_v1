@@ -1,0 +1,133 @@
+---
+title: "R0Beta"
+author: "Pierre Nouvellet"
+date: "2019-07"
+---
+
+```{r , include = FALSE, message = FALSE, warning = FALSE, error = FALSE}
+library(knitr)
+library(Hmisc)
+library(EpiEstim)
+library(zoo)
+library(latex2exp)
+
+opts_chunk$set(collapse = TRUE)
+
+opts_chunk$set(fig.path='figs/', fig.keep='high', 
+               dev=c('png'), fig.width=9, fig.height=6, cache=FALSE,
+               tidy=FALSE, warning=FALSE, fig.show="asis"
+ 	       )
+
+```
+
+# input data
+
+
+```{r}
+
+
+# date_week_finishing <-  as.Date('29/03/2020',format = '%d/%m/%Y')
+# si <- 2
+# rep <- 1e2
+# rep_sim <- 1e2
+
+inputs<- readRDS(file=paste0('../inputProcessing/Rdata/',date_week_finishing,'_inputs_SI_',si,'.rds'))
+
+D <- inputs$D
+M <- inputs$M
+Ot <- inputs$Ot
+W <- inputs$W
+H <- inputs$H
+SI <- inputs$SI
+delta_id <- inputs$delta_id
+#
+country <- names(D)[-1]
+
+mD <- as.matrix(D[,-1])
+N_geo <- ncol(D)-1
+N_days <- nrow(D)
+
+```
+
+
+# full model
+## Baseline model: estimate Rt
+
+get epiestim Rt estimates with 7 day time window.
+
+```{r, echo = FALSE}
+
+t.window <- 7
+R_epiest <- list()
+
+for (i in 1:N_geo){
+  
+  obs <- D[,c(1,i+1)]
+
+  epi_res <- EpiEstim::estimate_R(obs[,2],method = 'non_parametric_si',
+                                  config = make_config(list(
+                                    mean_prior = 1,
+                                    si_distr = SI$dist,
+                                    t_start = seq(2,length(obs$date)-t.window+1,1),
+                                    t_end = seq(t.window+1,length(obs$date),1))))
+  epi_res2 <- EpiEstim::estimate_R(obs[,2],method = 'non_parametric_si',
+                                  config = make_config(list(
+                                    mean_prior = 1,
+                                    si_distr = SI$dist, 
+                                    t_start = seq(8,length(obs$date)-t.window+1,by = t.window), 
+                                    t_end = seq(t.window*2,length(obs$date),by=t.window))))
+  for(j in 1:nrow(epi_res2$R)){
+    idx <- (epi_res2$R$t_start[j]-1-3):(epi_res2$R$t_start[j]-1+3)
+    epi_res$R[idx,3:11] <- matrix(as.numeric(epi_res2$R[j,3:11]),nrow = t.window,ncol = 11-3+1,byrow = TRUE)
+  }
+  epi_res$R$t_start <- epi_res$R$t_start[1]-1 + (1:nrow(epi_res$R))
+  epi_res$R$t_end <- epi_res$R$t_end[1]-1 + (1:nrow(epi_res$R))
+  
+  epi_res$R$t_mid <-  obs$date[epi_res$R$t_end - round(t.window/2) +1]
+  f <- which(cumsum(obs[,2])>0)[1]
+  f2 <- which(epi_res$R$t_end == (f-1))
+  epi_res$R[1:f2,3:11] <- NA
+  R_epiest[[i]] <- epi_res
+}
+
+
+# format outputs
+temp <- D
+temp[,-1] <- NA
+
+results_baseline <- list(median_R = temp,
+                         low_R = temp,
+                         up_R = temp,
+                         CV = temp,
+                         CV_below.2 = temp)
+
+for (i in 1:N_geo){
+  f <- which(results_baseline$median_R$dates %in% R_epiest[[i]]$R$t_mid)
+  results_baseline$median_R[f,i+1] <- R_epiest[[i]]$R$`Median(R)`
+  results_baseline$low_R[f,i+1] <- R_epiest[[i]]$R$`Quantile.0.025(R)`
+  results_baseline$up_R[f,i+1] <- R_epiest[[i]]$R$`Quantile.0.975(R)`
+  
+  results_baseline$CV[f,i+1] <- R_epiest[[i]]$R$`Std(R)`/R_epiest[[i]]$R$`Mean(R)`
+  results_baseline$CV_below.2[,i+1] <- results_baseline$CV[,i+1] < .2
+  
+  # results_baseline$M_D[,i+1] <- M_D[,i]
+}
+
+```
+
+
+## save for output
+
+
+
+Standard output for project
+
+
+```{r}
+
+output <- list(resEpi = results_baseline)
+
+
+saveRDS(object = output,
+        file = paste0('Rdata/',date_week_finishing,'_output_SI_',si,'.rds' ))
+```

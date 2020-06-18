@@ -1,0 +1,41 @@
+---
+title: "input"
+author: "Pierre Nouvellet"
+date: "2019-07"
+---
+
+```{r , include = FALSE, message = FALSE, warning = FALSE, error = FALSE}
+library(rmarkdown)
+
+```
+
+# input data
+
+```{r}
+source(file = '../inputProcessing/Rdata/date_input.r')
+
+
+
+```
+## run template
+
+```{r}
+
+rep <- 1e4
+rep_sim <- 1e4
+
+
+for (date_num in 1:length(dates_input)){
+  for (si_num in c(1,2)){
+    
+    date_week_finishing <-  as.Date(dates_input[date_num],format = '%Y-%m-%d')
+    si <- si_num
+    
+    rmarkdown::render(input = 'Template_R0Beta.Rmd',
+                      output_file = paste0('ouput_R0Beta_',date_week_finishing,'_SI_',si,'.html'))
+  }
+}
+
+
+```
+
